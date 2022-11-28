@@ -1,6 +1,7 @@
 package sqlx
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -13,65 +14,69 @@ import (
 // *sqlx.Stmt or *sqlx.NamedStmt statements to the fields of a given struct, matching based on the name
 // in the `query` tag in the struct field names.
 func ScanToStruct(obj interface{}, q goyesql.Queries, db *sqlx.DB) error {
-	ob := reflect.ValueOf(obj)
-	if ob.Kind() == reflect.Ptr {
-		ob = ob.Elem()
-	}
+   return ScanToStructContext(context.Background(), obj, q, db)
+}
 
-	if ob.Kind() != reflect.Struct {
-		return fmt.Errorf("Failed to apply SQL statements to struct. Non struct type: %T", ob)
-	}
+func ScanToStructContext(ctx context.Context, obj interface{}, q goyesql.Queries, db *sqlx.DB) error {
+   ob := reflect.ValueOf(obj)
+   if ob.Kind() == reflect.Ptr {
+   	ob = ob.Elem()
+   }
 
-	// Go through every field in the struct and look for it in the Args map.
-	for i := 0; i < ob.NumField(); i++ {
-		f := ob.Field(i)
+   if ob.Kind() != reflect.Struct {
+   	return fmt.Errorf("Failed to apply SQL statements to struct. Non struct type: %T", ob)
+   }
 
-		if f.IsValid() {
-			if tag := ob.Type().Field(i).Tag.Get("query"); tag != "" && tag != "-" {
-				// Extract the value of the `query` tag.
-				var (
-					tg   = strings.Split(tag, ",")
-					name string
-				)
-				if len(tg) == 2 {
-					if tg[0] != "-" && tg[0] != "" {
-						name = tg[0]
-					}
-				} else {
-					name = tg[0]
-				}
+   // Go through every field in the struct and look for it in the Args map.
+   for i := 0; i < ob.NumField(); i++ {
+   	f := ob.Field(i)
 
-				// Query name found in the field tag is not in the map.
-				if _, ok := q[name]; !ok {
-					return fmt.Errorf("query '%s' not found in query map", name)
-				}
+   	if f.IsValid() {
+   		if tag := ob.Type().Field(i).Tag.Get("query"); tag != "" && tag != "-" {
+   			// Extract the value of the `query` tag.
+   			var (
+   				tg   = strings.Split(tag, ",")
+   				name string
+   			)
+   			if len(tg) == 2 {
+   				if tg[0] != "-" && tg[0] != "" {
+   					name = tg[0]
+   				}
+   			} else {
+   				name = tg[0]
+   			}
 
-				if !f.CanSet() {
-					return fmt.Errorf("query field '%s' is unexported", ob.Type().Field(i).Name)
-				}
+   			// Query name found in the field tag is not in the map.
+   			if _, ok := q[name]; !ok {
+   				return fmt.Errorf("query '%s' not found in query map", name)
+   			}
 
-				switch f.Type().String() {
-				case "string":
-					// Unprepared SQL query.
-					f.Set(reflect.ValueOf(q[name].Query))
-				case "*sqlx.Stmt":
-					// Prepared query.
-					stmt, err := db.Preparex(q[name].Query)
-					if err != nil {
-						return fmt.Errorf("Error preparing query '%s': %v", name, err)
-					}
-					f.Set(reflect.ValueOf(stmt))
-				case "*sqlx.NamedStmt":
-					// Prepared query.
-					stmt, err := db.PrepareNamed(q[name].Query)
-					if err != nil {
-						return fmt.Errorf("Error preparing query '%s': %v", name, err)
-					}
-					f.Set(reflect.ValueOf(stmt))
-				}
-			}
-		}
-	}
+   			if !f.CanSet() {
+   				return fmt.Errorf("query field '%s' is unexported", ob.Type().Field(i).Name)
+   			}
 
-	return nil
+   			switch f.Type().String() {
+   			case "string":
+   				// Unprepared SQL query.
+   				f.Set(reflect.ValueOf(q[name].Query))
+   			case "*sqlx.Stmt":
+   				// Prepared query.
+   				stmt, err := db.PreparexContext(ctx, q[name].Query)
+   				if err != nil {
+   					return fmt.Errorf("Error preparing query '%s': %v", name, err)
+   				}
+   				f.Set(reflect.ValueOf(stmt))
+   			case "*sqlx.NamedStmt":
+   				// Prepared query.
+   				stmt, err := db.PrepareNamedContext(ctx, q[name].Query)
+   				if err != nil {
+   					return fmt.Errorf("Error preparing query '%s': %v", name, err)
+   				}
+   				f.Set(reflect.ValueOf(stmt))
+   			}
+   		}
+   	}
+   }
+
+   return nil
 }
